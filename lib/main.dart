@@ -156,14 +156,15 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   int _repeatRemaining = 0;
   int _queueIndex = 0;
   int _playbackRunId = 0;
+  int _activeSpeechRunId = 0;
   int _currentPage = 1;
 
-  double _rate = 1;
+  double _rate = 0.45;
   double _pitch = 1;
   double _gapSeconds = 1.5;
   int _repeatCount = 1;
 
-  String _status = 'Ready';
+  String _status = '準備完了';
   String _currentText = '';
   String _currentId = '';
   String _hiddenPlaybackText = '';
@@ -198,11 +199,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       await _tts.setLanguage('en-US');
       await _tts.setSpeechRate(_rate);
       await _tts.setPitch(_pitch);
-      await _tts.awaitSpeakCompletion(true);
+      await _tts.awaitSpeakCompletion(false);
     } catch (_) {
       if (mounted) {
         setState(() {
-          _status = 'TTS unavailable';
+          _status = '音声を使用できません';
         });
       }
       return;
@@ -215,7 +216,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       setState(() {
         _isPlaying = true;
         _isPaused = false;
-        _status = 'Playing';
+        _status = '再生中';
       });
     });
 
@@ -223,7 +224,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       if (!mounted) {
         return;
       }
-      _handleSpeechComplete(_playbackRunId);
+      _handleSpeechComplete(_activeSpeechRunId);
     });
 
     _tts.setErrorHandler((_) {
@@ -233,7 +234,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       setState(() {
         _isPlaying = false;
         _isPaused = false;
-        _status = 'Playback error';
+        _status = '再生エラー';
       });
     });
   }
@@ -260,18 +261,31 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
         .where(_isClearVoice)
         .toList();
 
-    final selected = <VoiceOption>[];
+    final selectedVoiceKeys = <String>{};
     final options = <VoiceOption>[];
     for (final profile in _voiceProfiles) {
-      if (options.length >= 10) {
-        break;
-      }
-      final voice = _findProfileVoice(profile, availableVoices, selected);
+      final voice = _findProfileVoice(
+        profile,
+        availableVoices,
+        selectedVoiceKeys,
+      );
       if (voice != null) {
-        selected.add(voice);
+        selectedVoiceKeys.add(_voiceKey(voice));
         options.add(
           VoiceOption(
             label: '${profile.label}: ${voice.name} (${voice.language})',
+            name: voice.name,
+            language: voice.language,
+          ),
+        );
+      }
+    }
+
+    for (final voice in availableVoices) {
+      if (selectedVoiceKeys.add(_voiceKey(voice))) {
+        options.add(
+          VoiceOption(
+            label: '${voice.name} (${voice.language})',
             name: voice.name,
             language: voice.language,
           ),
@@ -298,7 +312,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   VoiceOption? _findProfileVoice(
     VoiceProfile profile,
     List<VoiceOption> availableVoices,
-    List<VoiceOption> selectedVoices,
+    Set<String> selectedVoiceKeys,
   ) {
     final sameLanguage = availableVoices
         .where((voice) => voice.language == profile.language)
@@ -307,7 +321,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     for (final name in profile.names) {
       for (final voice in sameLanguage) {
         if (voice.name.toLowerCase().contains(name.toLowerCase()) &&
-            !selectedVoices.contains(voice)) {
+            !selectedVoiceKeys.contains(_voiceKey(voice))) {
           return voice;
         }
       }
@@ -315,13 +329,17 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 
     if (profile.language == 'en-CA') {
       for (final voice in sameLanguage) {
-        if (!selectedVoices.contains(voice)) {
+        if (!selectedVoiceKeys.contains(_voiceKey(voice))) {
           return voice;
         }
       }
     }
 
     return null;
+  }
+
+  String _voiceKey(VoiceOption voice) {
+    return '${voice.name}::${voice.language}'.toLowerCase();
   }
 
   Future<void> _applyVoiceSettings() async {
@@ -339,7 +357,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       await _tts.setSpeechRate(_rate);
       await _tts.setPitch(_pitch);
     } catch (_) {
-      _setStatus('TTS unavailable');
+      _setStatus('音声を使用できません');
     }
   }
 
@@ -351,6 +369,9 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   }
 
   String get _wordCountLabel {
+    if (_isPlaybackHidden) {
+      return '';
+    }
     if (_csvEntries.isEmpty && _textController.text.trim() == _welcomeText) {
       return '';
     }
@@ -359,7 +380,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     ).allMatches(_textController.text.trim());
     final idText = _currentId.isEmpty ? '' : 'id: $_currentId / ';
     final count = matches.length;
-    return '$idText$count word${count == 1 ? '' : 's'}';
+    return '$idText$count語';
   }
 
   List<PhraseEntry> get _currentPageEntries {
@@ -391,11 +412,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   Future<void> _playText([String? text, String id = '']) async {
     final trimmed = (text ?? _textController.text).trim();
     if (_csvEntries.isEmpty && trimmed == _welcomeText) {
-      _setStatus('Load CSV first');
+      _setStatus('CSVを読み込んでください');
       return;
     }
     if (trimmed.isEmpty) {
-      _setStatus('Enter text');
+      _setStatus('英文を入力してください');
       return;
     }
 
@@ -410,12 +431,12 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _repeatRemaining = _repeatCount;
       _resetHiddenPlaybackText(changeState: false);
     });
-    await _speak(trimmed);
+    unawaited(_speak(trimmed));
   }
 
   Future<void> _playPhraseList(List<PhraseEntry> phrases) async {
     if (phrases.isEmpty) {
-      _setStatus('No CSV text');
+      _setStatus('CSVに英文がありません');
       return;
     }
 
@@ -426,7 +447,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _playbackQueue = List.of(phrases);
       _queueIndex = 0;
     });
-    await _speakCurrentQueueItem();
+    unawaited(_speakCurrentQueueItem());
   }
 
   Future<void> _speakCurrentQueueItem() async {
@@ -437,10 +458,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _repeatRemaining = _repeatCount;
       _hideCurrentPlaybackText(changeState: false);
     });
-    await _speak(entry.text);
+    unawaited(_speak(entry.text));
   }
 
   Future<void> _speak(String text) async {
+    _activeSpeechRunId = _playbackRunId;
     await _applyVoiceSettings();
     await _tts.speak(text);
   }
@@ -479,7 +501,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     } else {
       setState(() {
         _isPlaying = false;
-        _status = 'Ready';
+        _status = '準備完了';
       });
     }
   }
@@ -487,7 +509,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   void _waitThenSpeakCurrentText(int runId) {
     setState(() {
       _isPlaying = false;
-      _status = 'Waiting';
+      _status = '待機中';
     });
     _queueTimer?.cancel();
     _queueTimer = Timer(
@@ -508,17 +530,17 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _textController.text = '';
       _currentId = '';
       _isPlaying = false;
-      _status = 'Ready';
+      _status = '準備完了';
     });
   }
 
   Future<void> _pauseOrResume() async {
     if (_isPaused) {
-      await _tts.speak(_currentText);
+      unawaited(_speak(_currentText));
       setState(() {
         _isPaused = false;
         _isPlaying = true;
-        _status = 'Playing';
+        _status = '再生中';
       });
       return;
     }
@@ -527,14 +549,13 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _isPaused = true;
       _isPlaying = false;
-      _status = 'Paused';
+      _status = '一時停止';
     });
   }
 
   Future<void> _stopPlayback() async {
     _playbackRunId += 1;
     _queueTimer?.cancel();
-    await _tts.stop();
     setState(() {
       _repeatRemaining = 0;
       _playbackQueue = [];
@@ -543,8 +564,9 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _currentId = '';
       _isPlaying = false;
       _isPaused = false;
-      _status = 'Stopped';
+      _status = '停止しました';
     });
+    unawaited(_tts.stop());
   }
 
   void _hideCurrentPlaybackText({bool changeState = true}) {
@@ -563,14 +585,14 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 
   void _revealCurrentPlaybackText() {
     if (_hiddenPlaybackText.isEmpty) {
-      _setStatus('No hidden text');
+      _setStatus('非表示の英文はありません');
       return;
     }
 
     setState(() {
       _isPlaybackHidden = false;
       _textController.text = _hiddenPlaybackText;
-      _status = 'Shown';
+      _status = '表示中';
     });
   }
 
@@ -589,14 +611,14 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 
   void _togglePlaybackText() {
     if (_hiddenPlaybackText.isEmpty) {
-      _setStatus('No hidden text');
+      _setStatus('非表示の英文はありません');
       return;
     }
     if (_isPlaybackHidden) {
       _revealCurrentPlaybackText();
     } else {
       _hideCurrentPlaybackText();
-      _setStatus('Hidden');
+      _setStatus('非表示中');
     }
   }
 
@@ -621,7 +643,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 
     final bytes = file.bytes;
     if (bytes == null) {
-      _setStatus('CSV read error');
+      _setStatus('CSVを読み込めません');
       return;
     }
 
@@ -635,7 +657,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _csvSummary = entries.isNotEmpty
           ? '${file.name}: ${entries.length}件'
           : '${file.name}: 英文なし';
-      _status = entries.isNotEmpty ? 'CSV loaded' : 'No English text';
+      _status = entries.isNotEmpty ? 'CSVを読み込みました' : '英文がありません';
     });
   }
 
@@ -649,20 +671,20 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _currentId = '';
       _csvSummary = '未読み込み';
       _textController.text = _welcomeText;
-      _status = 'CSV cleared';
+      _status = 'CSVをクリアしました';
     });
   }
 
   void _searchById() {
     final id = _idSearchController.text.trim();
     if (id.isEmpty) {
-      _setStatus('Enter id');
+      _setStatus('idを入力してください');
       return;
     }
 
     final entryIndex = _csvEntries.indexWhere((entry) => entry.id == id);
     if (entryIndex < 0) {
-      _setStatus('id not found');
+      _setStatus('idが見つかりません');
       return;
     }
 
@@ -670,7 +692,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _currentPage = (entryIndex / _pageSize).floor() + 1;
       _showEntry(entry, changeState: false);
-      _status = 'Found';
+      _status = '見つかりました';
     });
   }
 
@@ -896,7 +918,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                 const Spacer(),
                 _CircleButton(
                   icon: Icons.close,
-                  tooltip: 'Clear text',
+                  tooltip: '英文をクリア',
                   onPressed: _clearText,
                 ),
               ],
@@ -967,10 +989,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                 initialValue: _selectedVoiceIndex,
                 items: [
                   if (_voices.isEmpty)
-                    const DropdownMenuItem(
-                      value: -1,
-                      child: Text('Default browser voice'),
-                    ),
+                    const DropdownMenuItem(value: -1, child: Text('標準音声')),
                   ..._voices.indexed.map(
                     (voice) => DropdownMenuItem(
                       value: voice.$1,
@@ -995,12 +1014,12 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               ),
               const SizedBox(height: 16),
               _SliderField(
-                label: 'Speed',
+                label: '速度',
                 valueLabel: _rate.toStringAsFixed(2),
                 value: _rate,
-                min: 0.5,
-                max: 1.5,
-                divisions: 20,
+                min: 0.2,
+                max: 0.8,
+                divisions: 12,
                 onChanged: (value) {
                   setState(() {
                     _rate = value;
@@ -1046,21 +1065,21 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
             children: [
               _TransportButton(
                 icon: Icons.play_arrow,
-                tooltip: 'Play',
+                tooltip: '再生',
                 color: const Color(0xFF1F7A68),
                 onPressed: () => _playText(),
               ),
               const SizedBox(width: 12),
               _TransportButton(
                 icon: _isPaused ? Icons.play_arrow : Icons.pause,
-                tooltip: 'Pause',
+                tooltip: _isPaused ? '再開' : '一時停止',
                 color: const Color(0xFF1F7A68),
                 onPressed: _pauseOrResume,
               ),
               const SizedBox(width: 12),
               _TransportButton(
                 icon: Icons.stop,
-                tooltip: 'Stop',
+                tooltip: '停止',
                 color: const Color(0xFFC96145),
                 onPressed: _stopPlayback,
               ),
@@ -1192,7 +1211,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                     crossAxisCount: columns,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    mainAxisExtent: 116,
+                    mainAxisExtent: 132,
                   ),
                   itemBuilder: (context, index) {
                     final entry = entries[index];
@@ -1443,6 +1462,9 @@ class _CircleButton extends StatelessWidget {
       icon: Icon(icon, size: 20),
       style: IconButton.styleFrom(
         fixedSize: const Size.square(38),
+        minimumSize: const Size.square(38),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         backgroundColor: const Color(0xFFEDF2EF),
         foregroundColor: const Color(0xFF19211D),
       ),
@@ -1471,6 +1493,7 @@ class _TransportButton extends StatelessWidget {
       icon: Icon(icon, size: 28),
       style: IconButton.styleFrom(
         fixedSize: const Size.square(58),
+        minimumSize: const Size.square(58),
         backgroundColor: color,
         foregroundColor: Colors.white,
       ),
@@ -1541,16 +1564,17 @@ class _PhraseCard extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _CircleButton(
                 icon: Icons.north_east,
-                tooltip: 'Use phrase',
+                tooltip: '英文を入力欄へ',
                 onPressed: onUse,
               ),
               const SizedBox(height: 8),
               _CircleButton(
                 icon: Icons.play_arrow,
-                tooltip: 'Play phrase',
+                tooltip: 'この英文を再生',
                 onPressed: onPlay,
               ),
             ],

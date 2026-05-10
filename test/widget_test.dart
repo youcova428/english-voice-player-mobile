@@ -32,7 +32,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('English Voice Player'), findsOneWidget);
-    expect(find.text('Ready'), findsOneWidget);
+    expect(find.text('準備完了'), findsOneWidget);
     expect(find.text('リスト'), findsOneWidget);
     expect(find.text('読み込み'), findsOneWidget);
   });
