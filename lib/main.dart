@@ -71,6 +71,7 @@ class EnglishVoicePlayerPage extends StatefulWidget {
 
 class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   static const _pageSize = 50;
+  static const _maxVoiceOptions = 10;
   static const _welcomeText =
       'Welcome to English Voice Player! Load a CSV file and start playing audio!';
 
@@ -115,9 +116,18 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       language: 'en-CA',
       names: ['Liam', 'Matthew'],
     ),
-    VoiceProfile(label: 'アイルランド 女性', language: 'en-IE', names: ['Moira']),
     VoiceProfile(label: 'インド 男性', language: 'en-IN', names: ['Rishi']),
+    VoiceProfile(label: 'インド 女性', language: 'en-IN', names: ['Isha', 'Veena']),
+    VoiceProfile(label: 'アイルランド 女性', language: 'en-IE', names: ['Moira']),
+    VoiceProfile(
+      label: 'アイルランド 男性',
+      language: 'en-IE',
+      names: ['Connor', 'Sean'],
+    ),
     VoiceProfile(label: '南アフリカ 女性', language: 'en-ZA', names: ['Tessa']),
+    VoiceProfile(label: '南アフリカ 男性', language: 'en-ZA', names: ['Luke']),
+    VoiceProfile(label: 'ニュージーランド 女性', language: 'en-NZ', names: ['Aria']),
+    VoiceProfile(label: 'ニュージーランド 男性', language: 'en-NZ', names: ['Mitchell']),
   ];
 
   static const _hardToHearVoiceNames = [
@@ -173,6 +183,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   bool _isPlaying = false;
   bool _isPaused = false;
   bool _isPlaybackHidden = false;
+  bool _isUpdatingTextProgrammatically = false;
 
   Timer? _queueTimer;
 
@@ -273,7 +284,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
         selectedVoiceKeys.add(_voiceKey(voice));
         options.add(
           VoiceOption(
-            label: '${profile.label}: ${voice.name} (${voice.language})',
+            label: profile.label,
             name: voice.name,
             language: voice.language,
           ),
@@ -281,24 +292,13 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       }
     }
 
-    for (final voice in availableVoices) {
-      if (selectedVoiceKeys.add(_voiceKey(voice))) {
-        options.add(
-          VoiceOption(
-            label: '${voice.name} (${voice.language})',
-            name: voice.name,
-            language: voice.language,
-          ),
-        );
-      }
-    }
-
+    final limitedOptions = options.take(_maxVoiceOptions).toList();
     if (!mounted) {
       return;
     }
     setState(() {
-      _voices = options;
-      _selectedVoiceIndex = options.isEmpty ? -1 : 0;
+      _voices = limitedOptions;
+      _selectedVoiceIndex = limitedOptions.isEmpty ? -1 : 0;
     });
   }
 
@@ -315,7 +315,9 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     Set<String> selectedVoiceKeys,
   ) {
     final sameLanguage = availableVoices
-        .where((voice) => voice.language == profile.language)
+        .where(
+          (voice) => _isSameVoiceLanguage(voice.language, profile.language),
+        )
         .toList();
 
     for (final name in profile.names) {
@@ -327,19 +329,27 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       }
     }
 
-    if (profile.language == 'en-CA') {
-      for (final voice in sameLanguage) {
-        if (!selectedVoiceKeys.contains(_voiceKey(voice))) {
-          return voice;
-        }
+    for (final voice in sameLanguage) {
+      if (!selectedVoiceKeys.contains(_voiceKey(voice))) {
+        return voice;
       }
     }
 
     return null;
   }
 
+  bool _isSameVoiceLanguage(String voiceLanguage, String profileLanguage) {
+    return _normalizeVoiceLanguage(voiceLanguage) ==
+        _normalizeVoiceLanguage(profileLanguage);
+  }
+
+  String _normalizeVoiceLanguage(String language) {
+    return language.replaceAll('_', '-').toLowerCase();
+  }
+
   String _voiceKey(VoiceOption voice) {
-    return '${voice.name}::${voice.language}'.toLowerCase();
+    return '${voice.name}::${_normalizeVoiceLanguage(voice.language)}'
+        .toLowerCase();
   }
 
   Future<void> _applyVoiceSettings() async {
@@ -368,16 +378,27 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     return _voices[_selectedVoiceIndex];
   }
 
+  bool get _isPlaybackActive {
+    return _isPlaying ||
+        _isPaused ||
+        _playbackQueue.isNotEmpty ||
+        (_queueTimer?.isActive ?? false);
+  }
+
   String get _wordCountLabel {
     if (_isPlaybackHidden) {
       return '';
     }
-    if (_csvEntries.isEmpty && _textController.text.trim() == _welcomeText) {
+    final visibleText = _textController.text.trim().isNotEmpty
+        ? _textController.text.trim()
+        : _currentText.trim();
+    if (_csvEntries.isEmpty && visibleText == _welcomeText) {
       return '';
     }
-    final matches = RegExp(
-      r"[A-Za-z]+(?:'[A-Za-z]+)?",
-    ).allMatches(_textController.text.trim());
+    if (visibleText.isEmpty) {
+      return '';
+    }
+    final matches = RegExp(r"[A-Za-z]+(?:'[A-Za-z]+)?").allMatches(visibleText);
     final idText = _currentId.isEmpty ? '' : 'id: $_currentId / ';
     final count = matches.length;
     return '$idText$count語';
@@ -397,6 +418,9 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   }
 
   void _handleTextChanged() {
+    if (_isUpdatingTextProgrammatically) {
+      return;
+    }
     if (_isPlaybackHidden && _textController.text.isNotEmpty) {
       _resetHiddenPlaybackText();
     }
@@ -406,6 +430,15 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       });
     } else {
       setState(() {});
+    }
+  }
+
+  void _setEditorText(String text) {
+    _isUpdatingTextProgrammatically = true;
+    try {
+      _textController.text = text;
+    } finally {
+      _isUpdatingTextProgrammatically = false;
     }
   }
 
@@ -527,24 +560,23 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _playbackQueue = [];
       _queueIndex = 0;
       _resetHiddenPlaybackText(changeState: false);
-      _textController.text = '';
+      _setEditorText('');
       _currentId = '';
       _isPlaying = false;
       _status = '準備完了';
     });
   }
 
-  Future<void> _pauseOrResume() async {
-    if (_isPaused) {
-      unawaited(_speak(_currentText));
-      setState(() {
-        _isPaused = false;
-        _isPlaying = true;
-        _status = '再生中';
-      });
-      return;
-    }
+  void _resumePlayback() {
+    unawaited(_speak(_currentText));
+    setState(() {
+      _isPaused = false;
+      _isPlaying = true;
+      _status = '再生中';
+    });
+  }
 
+  Future<void> _pausePlayback() async {
     await _tts.pause();
     setState(() {
       _isPaused = true;
@@ -573,7 +605,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     void update() {
       _hiddenPlaybackText = _currentText;
       _isPlaybackHidden = true;
-      _textController.text = '';
+      _setEditorText('');
     }
 
     if (changeState) {
@@ -591,7 +623,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 
     setState(() {
       _isPlaybackHidden = false;
-      _textController.text = _hiddenPlaybackText;
+      _setEditorText(_hiddenPlaybackText);
       _status = '表示中';
     });
   }
@@ -626,7 +658,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _resetHiddenPlaybackText(changeState: false);
       _currentId = '';
-      _textController.text = '';
+      _setEditorText('');
     });
   }
 
@@ -653,7 +685,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _csvEntries = entries;
       _currentPage = 1;
       _currentId = '';
-      _textController.text = '';
+      _setEditorText('');
       _csvSummary = entries.isNotEmpty
           ? '${file.name}: ${entries.length}件'
           : '${file.name}: 英文なし';
@@ -670,7 +702,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _resetHiddenPlaybackText(changeState: false);
       _currentId = '';
       _csvSummary = '未読み込み';
-      _textController.text = _welcomeText;
+      _setEditorText(_welcomeText);
       _status = 'CSVをクリアしました';
     });
   }
@@ -701,7 +733,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _resetHiddenPlaybackText(changeState: false);
       _currentId = entry.id;
       _currentText = entry.text;
-      _textController.text = entry.text;
+      _setEditorText(entry.text);
     }
 
     if (changeState) {
@@ -987,6 +1019,8 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               const SizedBox(height: 8),
               DropdownButtonFormField<int>(
                 initialValue: _selectedVoiceIndex,
+                isExpanded: true,
+                menuMaxHeight: 340,
                 items: [
                   if (_voices.isEmpty)
                     const DropdownMenuItem(value: -1, child: Text('標準音声')),
@@ -1010,6 +1044,10 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                   fillColor: const Color(0xFFFBFCFB),
                   border: _fieldBorder,
                   enabledBorder: _fieldBorder,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -1067,21 +1105,27 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                 icon: Icons.play_arrow,
                 tooltip: '再生',
                 color: const Color(0xFF1F7A68),
-                onPressed: () => _playText(),
+                onPressed: _isPlaying
+                    ? null
+                    : _isPaused
+                    ? _resumePlayback
+                    : _isPlaybackActive
+                    ? null
+                    : () => _playText(),
               ),
               const SizedBox(width: 12),
               _TransportButton(
-                icon: _isPaused ? Icons.play_arrow : Icons.pause,
-                tooltip: _isPaused ? '再開' : '一時停止',
+                icon: Icons.pause,
+                tooltip: '一時停止',
                 color: const Color(0xFF1F7A68),
-                onPressed: _pauseOrResume,
+                onPressed: _isPlaying ? _pausePlayback : null,
               ),
               const SizedBox(width: 12),
               _TransportButton(
                 icon: Icons.stop,
                 tooltip: '停止',
                 color: const Color(0xFFC96145),
-                onPressed: _stopPlayback,
+                onPressed: _isPlaybackActive ? _stopPlayback : null,
               ),
             ],
           ),
@@ -1483,7 +1527,7 @@ class _TransportButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final Color color;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1496,6 +1540,8 @@ class _TransportButton extends StatelessWidget {
         minimumSize: const Size.square(58),
         backgroundColor: color,
         foregroundColor: Colors.white,
+        disabledBackgroundColor: const Color(0xFFD9DED8),
+        disabledForegroundColor: const Color(0xFF68716D),
       ),
     );
   }
