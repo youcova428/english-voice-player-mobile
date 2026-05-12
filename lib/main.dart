@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
@@ -18,15 +19,35 @@ class EnglishVoicePlayerApp extends StatelessWidget {
     return MaterialApp(
       title: 'English Voice Player',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1F7A68),
-          brightness: Brightness.light,
-        ),
-        fontFamily: 'Roboto',
-      ),
+      theme: _buildTheme(defaultTargetPlatform),
       home: const EnglishVoicePlayerPage(),
+    );
+  }
+
+  ThemeData _buildTheme(TargetPlatform platform) {
+    final isApple = platform == TargetPlatform.iOS;
+    final fontFamily = isApple ? '.SF Pro Text' : 'Roboto';
+    final fontFallback = isApple
+        ? const ['Hiragino Sans', 'Hiragino Kaku Gothic ProN']
+        : const ['Noto Sans CJK JP', 'Noto Sans JP', 'sans-serif'];
+
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF6B35D9),
+        brightness: Brightness.light,
+      ),
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFallback,
+      scaffoldBackgroundColor: const Color(0xFFF7F3FF),
+      textTheme: Typography.material2021().black.apply(
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
+      ),
+      primaryTextTheme: Typography.material2021().black.apply(
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
+      ),
     );
   }
 }
@@ -71,7 +92,6 @@ class EnglishVoicePlayerPage extends StatefulWidget {
 
 class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   static const _pageSize = 50;
-  static const _maxVoiceOptions = 10;
   static const _welcomeText =
       'Welcome to English Voice Player! Load a CSV file and start playing audio!';
 
@@ -179,6 +199,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   String _currentId = '';
   String _hiddenPlaybackText = '';
   String _csvSummary = '未読み込み';
+  String? _activeListPlaybackMode;
 
   bool _isPlaying = false;
   bool _isPaused = false;
@@ -261,6 +282,9 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       return;
     }
 
+    final profileLanguages = _voiceProfiles
+        .map((profile) => _normalizeVoiceLanguage(profile.language))
+        .toSet();
     final availableVoices = rawVoices
         .whereType<Map>()
         .map((voice) {
@@ -268,7 +292,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
           final locale = '${voice['locale'] ?? voice['language'] ?? ''}';
           return VoiceOption(label: name, name: name, language: locale);
         })
-        .where((voice) => voice.language.toLowerCase().startsWith('en'))
+        .where(
+          (voice) => profileLanguages.contains(
+            _normalizeVoiceLanguage(voice.language),
+          ),
+        )
         .where(_isClearVoice)
         .toList();
 
@@ -292,13 +320,12 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       }
     }
 
-    final limitedOptions = options.take(_maxVoiceOptions).toList();
     if (!mounted) {
       return;
     }
     setState(() {
-      _voices = limitedOptions;
-      _selectedVoiceIndex = limitedOptions.isEmpty ? -1 : 0;
+      _voices = options;
+      _selectedVoiceIndex = options.isEmpty ? -1 : 0;
     });
   }
 
@@ -462,12 +489,16 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _currentId = id;
       _currentText = trimmed;
       _repeatRemaining = _repeatCount;
+      _activeListPlaybackMode = null;
       _resetHiddenPlaybackText(changeState: false);
     });
     unawaited(_speak(trimmed));
   }
 
-  Future<void> _playPhraseList(List<PhraseEntry> phrases) async {
+  Future<void> _playPhraseList(
+    List<PhraseEntry> phrases,
+    String playbackMode,
+  ) async {
     if (phrases.isEmpty) {
       _setStatus('CSVに英文がありません');
       return;
@@ -479,6 +510,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _playbackQueue = List.of(phrases);
       _queueIndex = 0;
+      _activeListPlaybackMode = playbackMode;
     });
     unawaited(_speakCurrentQueueItem());
   }
@@ -559,6 +591,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _playbackQueue = [];
       _queueIndex = 0;
+      _activeListPlaybackMode = null;
       _resetHiddenPlaybackText(changeState: false);
       _setEditorText('');
       _currentId = '';
@@ -592,6 +625,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _repeatRemaining = 0;
       _playbackQueue = [];
       _queueIndex = 0;
+      _activeListPlaybackMode = null;
       _resetHiddenPlaybackText(changeState: false);
       _currentId = '';
       _isPlaying = false;
@@ -867,71 +901,74 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.network(
-            'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=1800&q=80',
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) =>
-                const ColoredBox(color: Color(0xFFF4F6F3)),
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: _isPlaying
+                ? const [
+                    Color(0xFF2A124D),
+                    Color(0xFF5D2BB8),
+                    Color(0xFF163D3A),
+                  ]
+                : const [
+                    Color(0xFFF8F4FF),
+                    Color(0xFFF3FBF7),
+                    Color(0xFFFFFFFF),
+                  ],
           ),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            color: _isPlaying
-                ? const Color(0xFFE9E0FA).withValues(alpha: 0.92)
-                : Colors.white.withValues(alpha: 0.72),
-          ),
-          SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1180),
-                child: Scrollbar(
+        ),
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1180),
+              child: Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
                   controller: _scrollController,
-                  thumbVisibility: true,
-                  child: SingleChildScrollView(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _TopBar(status: _status, isPlaying: _isPlaying),
-                        const SizedBox(height: 18),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final isWide = constraints.maxWidth > 860;
-                            final inputPanel = _buildInputPanel();
-                            final controlPanel = _buildControlPanel();
-                            if (!isWide) {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  inputPanel,
-                                  const SizedBox(height: 18),
-                                  controlPanel,
-                                ],
-                              );
-                            }
-                            return Row(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _TopBar(status: _status, isPlaying: _isPlaying),
+                      const SizedBox(height: 18),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isWide = constraints.maxWidth > 860;
+                          final inputPanel = _buildInputPanel();
+                          final controlPanel = _buildControlPanel();
+                          if (!isWide) {
+                            return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Expanded(child: inputPanel),
-                                const SizedBox(width: 18),
-                                SizedBox(width: 340, child: controlPanel),
+                                inputPanel,
+                                const SizedBox(height: 18),
+                                controlPanel,
                               ],
                             );
-                          },
-                        ),
-                        const SizedBox(height: 18),
-                        _buildPhraseSection(),
-                      ],
-                    ),
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(child: inputPanel),
+                              const SizedBox(width: 18),
+                              SizedBox(width: 340, child: controlPanel),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 18),
+                      _buildPhraseSection(),
+                    ],
                   ),
                 ),
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -970,11 +1007,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                       ? '再生中の英文は非表示です。表示ボタンで確認できます。'
                       : null,
                   filled: true,
-                  fillColor: const Color(0xFFFBFCFB),
+                  fillColor: const Color(0xFFFCFAFF),
                   border: _fieldBorder,
                   enabledBorder: _fieldBorder,
                   focusedBorder: _fieldBorder.copyWith(
-                    borderSide: const BorderSide(color: Color(0xFF1F7A68)),
+                    borderSide: const BorderSide(color: Color(0xFF6B35D9)),
                   ),
                 ),
               ),
@@ -993,7 +1030,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                   Text(
                     _wordCountLabel,
                     style: const TextStyle(
-                      color: Color(0xFF68716D),
+                      color: Color(0xFF5E556B),
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1041,7 +1078,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                 },
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: const Color(0xFFFBFCFB),
+                  fillColor: const Color(0xFFFCFAFF),
                   border: _fieldBorder,
                   enabledBorder: _fieldBorder,
                   contentPadding: const EdgeInsets.symmetric(
@@ -1084,7 +1121,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: const Color(0xFFFBFCFB),
+                  fillColor: const Color(0xFFFCFAFF),
                   border: _fieldBorder,
                   enabledBorder: _fieldBorder,
                 ),
@@ -1104,7 +1141,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               _TransportButton(
                 icon: Icons.play_arrow,
                 tooltip: '再生',
-                color: const Color(0xFF1F7A68),
+                color: const Color(0xFF6B35D9),
                 onPressed: _isPlaying
                     ? null
                     : _isPaused
@@ -1117,7 +1154,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               _TransportButton(
                 icon: Icons.pause,
                 tooltip: '一時停止',
-                color: const Color(0xFF1F7A68),
+                color: const Color(0xFF6B35D9),
                 onPressed: _isPlaying ? _pausePlayback : null,
               ),
               const SizedBox(width: 12),
@@ -1150,18 +1187,38 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
             alignment: Alignment.centerRight,
             child: SegmentedButton<String>(
               showSelectedIcon: false,
+              style: ButtonStyle(
+                backgroundColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) {
+                    return const Color(0xFF6B35D9);
+                  }
+                  return const Color(0xFFF0ECFA);
+                }),
+                foregroundColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) {
+                    return Colors.white;
+                  }
+                  return const Color(0xFF20182D);
+                }),
+                side: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) {
+                    return const BorderSide(color: Color(0xFF6B35D9));
+                  }
+                  return const BorderSide(color: Color(0xFFE3DDF1));
+                }),
+              ),
               segments: const [
                 ButtonSegment(value: 'all', label: Text('全再生')),
                 ButtonSegment(value: 'random', label: Text('ランダム再生')),
               ],
-              selected: const <String>{},
+              selected: {?_activeListPlaybackMode},
               emptySelectionAllowed: true,
               onSelectionChanged: (selection) {
                 final value = selection.firstOrNull;
                 if (value == 'all') {
-                  _playPhraseList(_csvEntries);
+                  _playPhraseList(_csvEntries, 'all');
                 } else if (value == 'random') {
-                  _playPhraseList(_shufflePhrases(_csvEntries));
+                  _playPhraseList(_shufflePhrases(_csvEntries), 'random');
                 }
               },
             ),
@@ -1195,7 +1252,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               Text(
                 _csvSummary,
                 style: const TextStyle(
-                  color: Color(0xFF68716D),
+                  color: Color(0xFF5E556B),
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -1219,7 +1276,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                   decoration: InputDecoration(
                     hintText: '半角数字',
                     filled: true,
-                    fillColor: const Color(0xFFFBFCFB),
+                    fillColor: const Color(0xFFFCFAFF),
                     border: _fieldBorder,
                     enabledBorder: _fieldBorder,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1284,7 +1341,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
         Text(
           '$start-$end / ${_csvEntries.length}',
           style: const TextStyle(
-            color: Color(0xFF68716D),
+            color: Color(0xFF5E556B),
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -1295,7 +1352,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
         Text(
           '$_currentPage / $_totalPages',
           style: const TextStyle(
-            color: Color(0xFF68716D),
+            color: Color(0xFF5E556B),
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -1309,14 +1366,14 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 }
 
 const _labelStyle = TextStyle(
-  color: Color(0xFF68716D),
+  color: Color(0xFF5E556B),
   fontSize: 13,
   fontWeight: FontWeight.w800,
 );
 
 final _fieldBorder = OutlineInputBorder(
   borderRadius: BorderRadius.circular(8),
-  borderSide: const BorderSide(color: Color(0xFFD9DED8)),
+  borderSide: const BorderSide(color: Color(0xFFE3DDF1)),
 );
 
 class _TopBar extends StatelessWidget {
@@ -1329,41 +1386,98 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Panel(
       isPlaying: isPlaying,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 18,
-        runSpacing: 12,
-        children: [
-          const Text(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final title = _HeaderTitle(isCompact: constraints.maxWidth < 520);
+          final statusPill = _StatusPill(status: status, isPlaying: isPlaying);
+          if (constraints.maxWidth < 620) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                title,
+                const SizedBox(height: 12),
+                Align(alignment: Alignment.centerLeft, child: statusPill),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: title),
+              const SizedBox(width: 18),
+              statusPill,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _HeaderTitle extends StatelessWidget {
+  const _HeaderTitle({required this.isCompact});
+
+  final bool isCompact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.asset(
+            'assets/branding/app_icon.png',
+            width: isCompact ? 42 : 48,
+            height: isCompact ? 42 : 48,
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Text(
             'English Voice Player',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: Color(0xFF19211D),
-              fontSize: 38,
-              height: 1.05,
-              fontWeight: FontWeight.w800,
+              color: const Color(0xFF20182D),
+              fontSize: isCompact ? 25 : 31,
+              height: 1.08,
+              fontWeight: FontWeight.w900,
             ),
           ),
-          Container(
-            constraints: const BoxConstraints(minWidth: 112),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: isPlaying
-                  ? const Color(0xFF704CB6)
-                  : const Color(0xFFEAF2EF),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              status,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: isPlaying ? Colors.white : const Color(0xFF155F52),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.status, required this.isPlaying});
+
+  final String status;
+  final bool isPlaying;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      constraints: const BoxConstraints(minWidth: 112),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: isPlaying ? const Color(0xFF7B3FEB) : const Color(0xFFEFF8F4),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: isPlaying
+              ? const Color(0xFFB79DFF).withValues(alpha: 0.5)
+              : const Color(0xFFBFD8CF),
+        ),
+      ),
+      child: Text(
+        status,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: isPlaying ? Colors.white : const Color(0xFF155F52),
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }
@@ -1387,20 +1501,20 @@ class _Panel extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: isPlaying
-            ? const Color(0xFFF8F4FF).withValues(alpha: 0.95)
-            : Colors.white.withValues(alpha: 0.91),
+            ? const Color(0xFFF1E9FF).withValues(alpha: 0.96)
+            : Colors.white.withValues(alpha: 0.94),
         border: Border.all(
           color: isPlaying
-              ? const Color(0xFF704CB6).withValues(alpha: 0.36)
-              : const Color(0xFFD9DED8).withValues(alpha: 0.9),
+              ? const Color(0xFF8A5BE8).withValues(alpha: 0.48)
+              : const Color(0xFFE3DDF1).withValues(alpha: 0.95),
         ),
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
             color: isPlaying
-                ? const Color(0xFF5D3E9B).withValues(alpha: 0.20)
-                : const Color(0xFF1D2C25).withValues(alpha: 0.12),
-            blurRadius: 45,
+                ? const Color(0xFF2F1559).withValues(alpha: 0.26)
+                : const Color(0xFF2F2440).withValues(alpha: 0.10),
+            blurRadius: 34,
             offset: const Offset(0, 18),
           ),
         ],
@@ -1449,7 +1563,8 @@ class _SliderField extends StatelessWidget {
           min: min,
           max: max,
           divisions: divisions,
-          activeColor: const Color(0xFF1F7A68),
+          activeColor: const Color(0xFF6B35D9),
+          inactiveColor: const Color(0xFFE1D8F5),
           onChanged: onChanged,
         ),
       ],
@@ -1470,13 +1585,13 @@ class _ActionButton extends StatelessWidget {
       child: FilledButton.tonal(
         onPressed: onPressed,
         style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFFEEF3F1),
-          foregroundColor: const Color(0xFF19211D),
+          backgroundColor: const Color(0xFFF0ECFA),
+          foregroundColor: const Color(0xFF20182D),
           disabledBackgroundColor: const Color(
-            0xFFEEF3F1,
+            0xFFF0ECFA,
           ).withValues(alpha: 0.5),
           disabledForegroundColor: const Color(
-            0xFF19211D,
+            0xFF20182D,
           ).withValues(alpha: 0.45),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           textStyle: const TextStyle(fontWeight: FontWeight.w800),
@@ -1509,8 +1624,8 @@ class _CircleButton extends StatelessWidget {
         minimumSize: const Size.square(38),
         padding: EdgeInsets.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        backgroundColor: const Color(0xFFEDF2EF),
-        foregroundColor: const Color(0xFF19211D),
+        backgroundColor: const Color(0xFFF0ECFA),
+        foregroundColor: const Color(0xFF20182D),
       ),
     );
   }
@@ -1540,8 +1655,8 @@ class _TransportButton extends StatelessWidget {
         minimumSize: const Size.square(58),
         backgroundColor: color,
         foregroundColor: Colors.white,
-        disabledBackgroundColor: const Color(0xFFD9DED8),
-        disabledForegroundColor: const Color(0xFF68716D),
+        disabledBackgroundColor: const Color(0xFFE4DDED),
+        disabledForegroundColor: const Color(0xFF7C738A),
       ),
     );
   }
@@ -1565,16 +1680,17 @@ class _PhraseCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: isActive ? const Color(0xFFEEF8F4) : const Color(0xFFFBFCFB),
+        color: isActive ? const Color(0xFFF0E9FF) : const Color(0xFFFCFAFF),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isActive ? const Color(0xFF1F7A68) : const Color(0xFFD9DED8),
+          color: isActive ? const Color(0xFF6B35D9) : const Color(0xFFE3DDF1),
         ),
         boxShadow: isActive
             ? [
                 BoxShadow(
-                  color: const Color(0xFF1F7A68).withValues(alpha: 0.12),
-                  spreadRadius: 3,
+                  color: const Color(0xFF6B35D9).withValues(alpha: 0.16),
+                  spreadRadius: 2,
+                  blurRadius: 16,
                 ),
               ]
             : null,
@@ -1592,7 +1708,7 @@ class _PhraseCard extends StatelessWidget {
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0xFF19211D),
+                      color: Color(0xFF20182D),
                       fontSize: 15,
                       height: 1.45,
                     ),
@@ -1601,7 +1717,7 @@ class _PhraseCard extends StatelessWidget {
                 Text(
                   'id: ${entry.id}',
                   style: const TextStyle(
-                    color: Color(0xFF68716D),
+                    color: Color(0xFF5E556B),
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -1642,13 +1758,13 @@ class _EmptyState extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: const Color(0xFFD9DED8),
+          color: const Color(0xFFE3DDF1),
           style: BorderStyle.solid,
         ),
       ),
       child: const Text(
         '読み込みをすると英文がここに表示されます。',
-        style: TextStyle(color: Color(0xFF68716D), fontWeight: FontWeight.w800),
+        style: TextStyle(color: Color(0xFF5E556B), fontWeight: FontWeight.w800),
       ),
     );
   }
