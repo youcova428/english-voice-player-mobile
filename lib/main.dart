@@ -205,6 +205,8 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   bool _isPaused = false;
   bool _isPlaybackHidden = false;
   bool _isUpdatingTextProgrammatically = false;
+  bool _isWaitingBetweenPhrases = false;
+  int _waitProgressRunId = 0;
 
   Timer? _queueTimer;
 
@@ -416,9 +418,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     if (_isPlaybackHidden) {
       return '';
     }
-    final visibleText = _textController.text.trim().isNotEmpty
-        ? _textController.text.trim()
-        : _currentText.trim();
+    final visibleText = _textController.text.trim();
     if (_csvEntries.isEmpty && visibleText == _welcomeText) {
       return '';
     }
@@ -490,6 +490,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _currentText = trimmed;
       _repeatRemaining = _repeatCount;
       _activeListPlaybackMode = null;
+      _isWaitingBetweenPhrases = false;
       _resetHiddenPlaybackText(changeState: false);
     });
     unawaited(_speak(trimmed));
@@ -511,6 +512,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _playbackQueue = List.of(phrases);
       _queueIndex = 0;
       _activeListPlaybackMode = playbackMode;
+      _isWaitingBetweenPhrases = false;
     });
     unawaited(_speakCurrentQueueItem());
   }
@@ -528,6 +530,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
 
   Future<void> _speak(String text) async {
     _activeSpeechRunId = _playbackRunId;
+    if (mounted && _isWaitingBetweenPhrases) {
+      setState(() {
+        _isWaitingBetweenPhrases = false;
+      });
+    }
     await _applyVoiceSettings();
     await _tts.speak(text);
   }
@@ -574,6 +581,8 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
   void _waitThenSpeakCurrentText(int runId) {
     setState(() {
       _isPlaying = false;
+      _isWaitingBetweenPhrases = true;
+      _waitProgressRunId += 1;
       _status = '待機中';
     });
     _queueTimer?.cancel();
@@ -592,9 +601,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _playbackQueue = [];
       _queueIndex = 0;
       _activeListPlaybackMode = null;
+      _isWaitingBetweenPhrases = false;
       _resetHiddenPlaybackText(changeState: false);
       _setEditorText('');
       _currentId = '';
+      _currentText = '';
       _isPlaying = false;
       _status = '準備完了';
     });
@@ -626,8 +637,11 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _playbackQueue = [];
       _queueIndex = 0;
       _activeListPlaybackMode = null;
+      _isWaitingBetweenPhrases = false;
       _resetHiddenPlaybackText(changeState: false);
       _currentId = '';
+      _currentText = '';
+      _setEditorText('');
       _isPlaying = false;
       _isPaused = false;
       _status = '停止しました';
@@ -692,6 +706,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _resetHiddenPlaybackText(changeState: false);
       _currentId = '';
+      _currentText = '';
       _setEditorText('');
     });
   }
@@ -933,7 +948,13 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _TopBar(status: _status, isPlaying: _isPlaying),
+                      _TopBar(
+                        status: _status,
+                        isPlaying: _isPlaying,
+                        isWaiting: _isWaitingBetweenPhrases,
+                        waitProgressRunId: _waitProgressRunId,
+                        gapSeconds: _gapSeconds,
+                      ),
                       const SizedBox(height: 18),
                       LayoutBuilder(
                         builder: (context, constraints) {
@@ -997,6 +1018,7 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               height: 260,
               child: TextField(
                 controller: _textController,
+                readOnly: true,
                 minLines: null,
                 maxLines: null,
                 expands: true,
@@ -1178,11 +1200,6 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'リスト',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 14),
           Align(
             alignment: Alignment.centerRight,
             child: SegmentedButton<String>(
@@ -1264,10 +1281,6 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
             runSpacing: 10,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const SizedBox(
-                width: double.infinity,
-                child: Text('検索', style: _labelStyle),
-              ),
               SizedBox(
                 width: 180,
                 child: TextField(
@@ -1377,10 +1390,19 @@ final _fieldBorder = OutlineInputBorder(
 );
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.status, required this.isPlaying});
+  const _TopBar({
+    required this.status,
+    required this.isPlaying,
+    required this.isWaiting,
+    required this.waitProgressRunId,
+    required this.gapSeconds,
+  });
 
   final String status;
   final bool isPlaying;
+  final bool isWaiting;
+  final int waitProgressRunId;
+  final double gapSeconds;
 
   @override
   Widget build(BuildContext context) {
@@ -1390,7 +1412,13 @@ class _TopBar extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final title = _HeaderTitle(isCompact: constraints.maxWidth < 520);
-          final statusPill = _StatusPill(status: status, isPlaying: isPlaying);
+          final statusPill = _StatusPill(
+            status: status,
+            isPlaying: isPlaying,
+            isWaiting: isWaiting,
+            waitProgressRunId: waitProgressRunId,
+            gapSeconds: gapSeconds,
+          );
           if (constraints.maxWidth < 620) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1451,34 +1479,81 @@ class _HeaderTitle extends StatelessWidget {
 }
 
 class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.status, required this.isPlaying});
+  const _StatusPill({
+    required this.status,
+    required this.isPlaying,
+    required this.isWaiting,
+    required this.waitProgressRunId,
+    required this.gapSeconds,
+  });
 
   final String status;
   final bool isPlaying;
+  final bool isWaiting;
+  final int waitProgressRunId;
+  final double gapSeconds;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      constraints: const BoxConstraints(minWidth: 112),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-      decoration: BoxDecoration(
-        color: isPlaying ? const Color(0xFF7B3FEB) : const Color(0xFFEFF8F4),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: isPlaying
-              ? const Color(0xFFB79DFF).withValues(alpha: 0.5)
-              : const Color(0xFFBFD8CF),
-        ),
+    final baseColor = isPlaying
+        ? const Color(0xFF7B3FEB)
+        : const Color(0xFFF0ECFA);
+    final textColor = isPlaying || isWaiting
+        ? Colors.white
+        : const Color(0xFF5B33B8);
+    final borderColor = isPlaying || isWaiting
+        ? const Color(0xFFB79DFF).withValues(alpha: 0.5)
+        : const Color(0xFFE3DDF1);
+
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(isWaiting ? waitProgressRunId : -1),
+      tween: Tween(begin: 0, end: isWaiting ? 1 : 0),
+      duration: Duration(
+        milliseconds: isWaiting ? (gapSeconds * 1000).round() : 180,
       ),
-      child: Text(
-        status,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: isPlaying ? Colors.white : const Color(0xFF155F52),
-          fontWeight: FontWeight.w800,
-        ),
-      ),
+      curve: Curves.linear,
+      builder: (context, progress, child) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            constraints: const BoxConstraints(minWidth: 112, maxWidth: 180),
+            decoration: BoxDecoration(
+              color: baseColor,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: borderColor),
+            ),
+            child: Stack(
+              children: [
+                if (isWaiting)
+                  Positioned.fill(
+                    child: FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: progress,
+                      child: const ColoredBox(color: Color(0xFF6B35D9)),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
+                  ),
+                  child: Center(
+                    child: Text(
+                      status,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
