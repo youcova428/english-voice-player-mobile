@@ -672,7 +672,6 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
     setState(() {
       _isPlaybackHidden = false;
       _setEditorText(_hiddenPlaybackText);
-      _status = '表示中';
     });
   }
 
@@ -698,7 +697,6 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
       _revealCurrentPlaybackText();
     } else {
       _hideCurrentPlaybackText();
-      _setStatus('非表示中');
     }
   }
 
@@ -1138,19 +1136,29 @@ class _EnglishVoicePlayerPageState extends State<EnglishVoicePlayerPage> {
               ),
               const Text('繰り返し', style: _labelStyle),
               const SizedBox(height: 8),
-              TextFormField(
-                initialValue: '1',
-                keyboardType: TextInputType.number,
+              DropdownButtonFormField<int>(
+                initialValue: _repeatCount,
+                isExpanded: true,
+                items: List.generate(99, (index) {
+                  final count = index + 1;
+                  return DropdownMenuItem<int>(
+                    value: count,
+                    child: Text('$count回'),
+                  );
+                }),
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: const Color(0xFFFCFAFF),
                   border: _fieldBorder,
                   enabledBorder: _fieldBorder,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
                 ),
                 onChanged: (value) {
-                  final parsed = int.tryParse(value) ?? 1;
                   setState(() {
-                    _repeatCount = parsed.clamp(1, 10);
+                    _repeatCount = value ?? 1;
                   });
                 },
               ),
